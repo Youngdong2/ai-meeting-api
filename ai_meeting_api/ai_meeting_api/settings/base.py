@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     # Local apps
     "ai_meeting_commons",
     "ai_meeting_users",
+    "ai_meeting_teams",
 ]
 
 MIDDLEWARE = [
