@@ -1,7 +1,7 @@
 [project]
 name = "ai-meeting-api"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI Meeting API - Backend for AI-powered meeting transcription and summarization"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -10,4 +10,39 @@ dependencies = [
     "django-extensions>=4.1",
     "djangorestframework>=3.16.1",
     "djangorestframework-simplejwt>=5.5.1",
+    "psycopg2-binary>=2.9.11",
+    "python-dotenv>=1.2.1",
 ]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.0",
+    "pre-commit>=4.5.0",
+    "ruff>=0.14.8",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # Pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ai_meeting_api", "ai_meeting_commons", "ai_meeting_users"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+disable_error_code = ["var-annotated"]
