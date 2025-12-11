@@ -1,0 +1,6 @@
+from django.apps import AppConfig
+
+
+class AiMeetingCommonsConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'ai_meeting_commons'
