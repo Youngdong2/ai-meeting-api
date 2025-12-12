@@ -201,9 +201,34 @@ Authorization: Bearer <token>
 ```json
 {
   "phone_number": "string (선택)",
-  "team": 1  // 팀 ID (선택)
+  "team": 1  // 팀 ID (선택) - 팀 가입/변경
 }
 ```
+
+**응답: 200 OK**
+```json
+{
+  "id": 1,
+  "username": "john_doe",
+  "email": "john@example.com",
+  "gender": "M",
+  "birth_date": "1990-01-01",
+  "phone_number": "010-9999-8888",
+  "team": 2,
+  "team_info": {
+    "id": 2,
+    "name": "개발팀"
+  },
+  "is_team_admin": false,
+  "created_at": "2025-01-01T12:00:00Z"
+}
+```
+
+> **팀 가입/변경 안내:**
+> - 사용자는 `team` 필드에 팀 ID를 전달하여 원하는 팀에 가입할 수 있습니다.
+> - 팀을 변경하면 기존 팀 관리자 권한(`is_team_admin`)이 자동으로 `false`로 초기화됩니다.
+> - 팀 관리자 권한은 해당 팀의 기존 관리자가 부여해야 합니다.
+> - `team`에 `null`을 전달하면 팀에서 탈퇴합니다.
 
 ### 3.6 비밀번호 변경
 
@@ -253,11 +278,11 @@ GET /v1/teams/{id}/
 Authorization: Bearer <token>
 ```
 
-### 4.3 팀 생성 (is_staff만)
+### 4.3 팀 생성
 
 ```http
 POST /v1/teams/
-Authorization: Bearer <admin_token>
+Authorization: Bearer <token>
 ```
 
 **요청:**
@@ -267,6 +292,20 @@ Authorization: Bearer <admin_token>
   "description": "string (선택)"
 }
 ```
+
+**응답: 201 Created**
+```json
+{
+  "id": 1,
+  "name": "AI팀",
+  "description": "AI 연구개발팀",
+  "member_count": 1,
+  "created_at": "2025-01-15T12:00:00Z",
+  "updated_at": "2025-01-15T12:00:00Z"
+}
+```
+
+> **참고**: 팀 생성 시 생성자가 자동으로 해당 팀에 배정되고 팀 관리자 권한이 부여됩니다.
 
 ### 4.4 팀 설정 조회 (팀 관리자만)
 
@@ -846,3 +885,4 @@ function MeetingSummary({ summary }) {
 | 버전 | 날짜 | 변경 내용 |
 |------|------|----------|
 | 1.0 | 2025-01-15 | 최초 작성 - Phase 4-5 완료 |
+| 1.1 | 2025-01-15 | 팀 생성 권한 변경 (인증된 사용자 모두 가능), 프로필 수정으로 팀 가입/변경 기능 문서화 |
