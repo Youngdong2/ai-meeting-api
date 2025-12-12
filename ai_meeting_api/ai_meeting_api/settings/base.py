@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     "ai_meeting_commons",
     "ai_meeting_users",
     "ai_meeting_teams",
+    "ai_meeting_meetings",
 ]
 
 MIDDLEWARE = [
