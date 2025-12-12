@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "django_extensions",
     "rest_framework",
     "rest_framework_simplejwt",
+    "django_celery_beat",
     # Local apps
     "ai_meeting_commons",
     "ai_meeting_users",
@@ -166,3 +167,24 @@ SIMPLE_JWT = {
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
 }
+
+# Celery 설정
+CELERY_BROKER_URL = os.environ.get("REDIS_URL", "redis://localhost:6380/0")
+CELERY_RESULT_BACKEND = os.environ.get("REDIS_URL", "redis://localhost:6380/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "Asia/Seoul"
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30분
+
+# Celery Beat 스케줄 설정
+CELERY_BEAT_SCHEDULE = {
+    "cleanup-expired-audio-files": {
+        "task": "ai_meeting_meetings.tasks.cleanup_expired_audio_files",
+        "schedule": 60 * 60 * 24,  # 매일 1회 (24시간마다)
+    },
+}
+
+# App URL (Slack 등 외부 연동 시 사용)
+APP_URL = os.environ.get("APP_URL", "")

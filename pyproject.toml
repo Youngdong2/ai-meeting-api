@@ -12,6 +12,15 @@ dependencies = [
     "djangorestframework-simplejwt>=5.5.1",
     "psycopg2-binary>=2.9.11",
     "python-dotenv>=1.2.1",
+    # Async processing
+    "celery>=5.4.0",
+    "redis>=5.0.0",
+    # OpenAI
+    "openai>=1.58.0",
+    # External integrations
+    "requests>=2.32.0",
+    # Celery Beat scheduler
+    "django-celery-beat>=2.7.0",
 ]
 
 [dependency-groups]
@@ -47,4 +56,4 @@ known-first-party = ["ai_meeting_api", "ai_meeting_commons", "ai_meeting_users"]
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
-disable_error_code = ["var-annotated", "arg-type"]
+disable_error_code = ["var-annotated", "arg-type", "import-untyped"]

@@ -154,3 +154,36 @@ class MeetingStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = Meeting
         fields = ["id", "status", "status_display", "error_message"]
+
+
+class MeetingSearchSerializer(serializers.ModelSerializer):
+    """회의록 검색 결과 Serializer"""
+
+    created_by_name = serializers.CharField(source="created_by.username", read_only=True)
+    summary_preview = serializers.SerializerMethodField()
+    transcript_preview = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Meeting
+        fields = [
+            "id",
+            "title",
+            "meeting_date",
+            "summary_preview",
+            "transcript_preview",
+            "created_by_name",
+            "created_at",
+        ]
+
+    def get_summary_preview(self, obj):
+        """요약 미리보기 (처음 200자)"""
+        if obj.summary:
+            return obj.summary[:200] + "..." if len(obj.summary) > 200 else obj.summary
+        return ""
+
+    def get_transcript_preview(self, obj):
+        """전문 미리보기 (처음 200자)"""
+        text = obj.corrected_transcript or obj.transcript
+        if text:
+            return text[:200] + "..." if len(text) > 200 else text
+        return ""
