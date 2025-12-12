@@ -11,7 +11,9 @@
 | 팀 구조 | 사용자가 프로필에서 팀 선택, 팀별 회의록 분리 |
 | 관리자 기능 | 특정 사용자에게 팀 관리자 권한 부여 (is_team_admin) |
 | 회의록 권한 | 모든 팀원이 수정/삭제 가능 |
+| 녹음 방식 | 프론트엔드에서 실시간 녹음 → 완료 후 파일 업로드 |
 | STT 처리 | 업로드 시 자동 시작 (클로바노트 방식) |
+| 긴 녹음 처리 | 서버에서 25분 단위로 자동 분할 후 병합 |
 | OpenAI API Key | 팀별 관리 (TeamSetting에 저장) |
 | 인증 방식 | 현재 이메일/비밀번호 JWT 유지 |
 
@@ -364,18 +366,89 @@ STT 결과물의 품질 향상을 위한 교정 단계:
 {transcript}
 ```
 
-### 5.5 파일 청크 처리
+### 5.5 긴 오디오 파일 분할 처리
 
-OpenAI API 제한 (25MB) 대응:
-```python
-def process_large_audio(file):
-    if file.size <= 25MB:
-        return transcribe(file)
-    else:
-        chunks = split_audio(file, chunk_size=20MB)
-        results = [transcribe(chunk) for chunk in chunks]
-        return merge_transcripts(results)
+#### 5.5.1 OpenAI API 제한사항
+| 항목 | 제한 |
+|------|------|
+| 파일 크기 | 25MB |
+| 오디오 길이 | **1500초 (25분)** |
+| 모델 | gpt-4o-transcribe-diarize |
+
+#### 5.5.2 녹음 방식
+- **프론트엔드**: Web Audio API / MediaRecorder API로 브라우저에서 실시간 녹음
+- **녹음 완료 후**: Blob/File로 변환하여 기존 업로드 API 사용
+- **백엔드 변경 불필요**: 프론트엔드에서 녹음 UI만 추가
+
+#### 5.5.3 긴 파일 처리 흐름
 ```
+[프론트엔드] 녹음 (30분~2시간)
+    ↓
+[프론트엔드] 녹음 완료 → Blob → 업로드
+    ↓
+[백엔드] 파일 저장
+    ↓
+[백엔드] 오디오 길이 체크
+    ├─ 25분 이하 → 기존 단일 STT 처리
+    └─ 25분 초과 → ffmpeg로 20분 단위 분할
+                    ↓
+                각 청크별 STT 처리 (순차)
+                    ↓
+                결과 병합 (transcript, speaker_data)
+                    ↓
+                교정 → 요약 (기존 흐름)
+```
+
+#### 5.5.4 분할 처리 로직
+```python
+MAX_CHUNK_DURATION = 20 * 60  # 20분 (여유를 두고 25분 제한 대비)
+
+def split_audio_if_needed(audio_path: str) -> list[str]:
+    """오디오 파일이 25분 초과 시 20분 단위로 분할"""
+    duration = get_audio_duration(audio_path)
+
+    if duration <= MAX_CHUNK_DURATION:
+        return [audio_path]
+
+    # ffmpeg로 20분 단위 분할
+    # -f segment -segment_time 1200 (20분)
+    # -reset_timestamps 1 (메타데이터 리셋 필수)
+    chunks = split_audio_ffmpeg(audio_path, MAX_CHUNK_DURATION)
+    return chunks
+
+def transcribe_long_audio(audio_path: str, client: OpenAIClient) -> dict:
+    """긴 오디오 파일 분할 STT 처리"""
+    chunks = split_audio_if_needed(audio_path)
+
+    all_text = []
+    all_segments = []
+    time_offset = 0.0
+
+    for chunk_path in chunks:
+        result = client.transcribe_audio(chunk_path)
+        all_text.append(result["text"])
+
+        # 시간 오프셋 적용하여 세그먼트 병합
+        for segment in result["segments"]:
+            all_segments.append({
+                "speaker": segment["speaker"],
+                "start": segment["start"] + time_offset,
+                "end": segment["end"] + time_offset,
+                "text": segment["text"],
+            })
+
+        time_offset += get_audio_duration(chunk_path)
+
+    return {
+        "text": " ".join(all_text),
+        "segments": all_segments,
+    }
+```
+
+#### 5.5.5 주의사항
+- **`-reset_timestamps 1`**: ffmpeg 분할 시 필수 (메타데이터 리셋)
+- **화자 연속성**: 분할 경계에서 동일 화자가 다른 라벨로 인식될 수 있음 (후처리 필요 시 검토)
+- **파일 크기 제한 상향**: 100MB → 500MB (긴 녹음 지원)
 
 ### 5.6 음성 파일 자동 삭제 (90일)
 
@@ -578,3 +651,4 @@ MEDIA_ROOT=/path/to/media
 - [x] Slack 연동 (선택)
 - [x] 음성 파일 자동 삭제 (90일) - Celery Beat
 - [x] OpenAI API Key 관리 (팀별)
+- [ ] **긴 오디오 파일 분할 처리** (25분 초과 시 자동 분할 → 병합)
