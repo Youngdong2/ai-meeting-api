@@ -458,6 +458,34 @@ Authorization: Bearer <token>
     }
   ],
   "corrected_transcript": "교정된 텍스트...",
+  "corrected_speaker_data": [
+    {
+      "speaker": "Speaker 0",
+      "text": "안녕하세요.",
+      "start": 0.0,
+      "end": 2.5
+    },
+    {
+      "speaker": "Speaker 1",
+      "text": "네, 안녕하세요.",
+      "start": 2.6,
+      "end": 4.0
+    }
+  ],
+  "chat_transcript": [
+    {
+      "speaker": "김영도",
+      "text": "안녕하세요.",
+      "start": 0.0,
+      "end": 2.5
+    },
+    {
+      "speaker": "홍길동",
+      "text": "네, 안녕하세요.",
+      "start": 2.6,
+      "end": 4.0
+    }
+  ],
   "summary": "## 회의 요약\n\n### 참석자\n- Speaker 0\n- Speaker 1\n\n### 주요 논의 사항\n...",
   "status": "completed",
   "status_display": "완료",
@@ -824,9 +852,23 @@ async function pollMeetingStatus(meetingId) {
 }
 ```
 
-### 7.3 화자별 발언 표시
+### 7.3 화자별 발언 표시 (채팅형 UI)
+
+`chat_transcript` 필드를 사용하면 화자 이름 매핑이 이미 적용된 데이터를 바로 사용할 수 있습니다.
 
 ```javascript
+// 방법 1: chat_transcript 사용 (권장)
+// - 교정된 텍스트 + 화자 이름 매핑이 적용된 데이터
+function renderChatTranscript(chatTranscript) {
+  return chatTranscript.map(segment => ({
+    speaker: segment.speaker,  // 이미 실제 이름으로 매핑됨
+    text: segment.text,        // 교정된 텍스트
+    startTime: formatTime(segment.start),
+    endTime: formatTime(segment.end)
+  }));
+}
+
+// 방법 2: speaker_data + speakerMappings 사용 (원본 데이터 필요 시)
 function renderSpeakerData(speakerData, speakerMappings) {
   const mappingDict = {};
   speakerMappings.forEach(m => {
@@ -841,6 +883,13 @@ function renderSpeakerData(speakerData, speakerMappings) {
   }));
 }
 ```
+
+**필드 비교:**
+| 필드 | 설명 |
+|------|------|
+| `speaker_data` | 원본 STT 결과 (화자 라벨: "Speaker 0") |
+| `corrected_speaker_data` | 교정된 화자별 데이터 (화자 라벨 유지) |
+| `chat_transcript` | 교정 + 화자 이름 매핑 적용 (실제 이름: "김영도") |
 
 ### 7.4 마크다운 요약 렌더링
 
@@ -888,3 +937,4 @@ function MeetingSummary({ summary }) {
 | 1.0 | 2025-01-15 | 최초 작성 - Phase 4-5 완료 |
 | 1.1 | 2025-01-15 | 팀 생성 권한 변경 (인증된 사용자 모두 가능), 프로필 수정으로 팀 가입/변경 기능 문서화 |
 | 1.2 | 2025-12-12 | 긴 오디오 파일 분할 처리 기능 추가 (25분 초과 시 자동 분할), 파일 크기 제한 상향 (100MB → 500MB) |
+| 1.3 | 2025-12-12 | 채팅형 전문 표시 기능 추가 - `corrected_speaker_data`, `chat_transcript` 필드 추가 |
