@@ -40,17 +40,18 @@ class OpenAIClient:
 
         with open(audio_path, "rb") as audio_file:
             response = self.client.audio.transcriptions.create(
-                model="gpt-4o-transcribe",
+                model="gpt-4o-transcribe-diarize",
                 file=audio_file,
                 language=language,
-                response_format="verbose_json",
-                timestamp_granularities=["segment"],
+                response_format="diarized_json",
+                chunking_strategy="auto",
             )
 
         return {
             "text": response.text,
             "segments": [
                 {
+                    "speaker": getattr(segment, "speaker", ""),
                     "start": segment.start,
                     "end": segment.end,
                     "text": segment.text,
