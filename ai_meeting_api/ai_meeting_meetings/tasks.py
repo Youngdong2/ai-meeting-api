@@ -8,18 +8,23 @@
 4. AI 요약 생성 (OpenAI gpt-4o-mini)
 """
 
+import json
 import logging
 import subprocess
 import tempfile
 from pathlib import Path
 
-from ai_meeting_integrations.openai_client import get_openai_client
+from ai_meeting_integrations.openai_client import OpenAIClient, get_openai_client
 from celery import shared_task
 from django.utils import timezone
 
 from .models import Meeting, MeetingStatus
 
 logger = logging.getLogger(__name__)
+
+# OpenAI API 제한: 최대 25분 (1500초)
+# 여유를 두고 20분 단위로 분할
+MAX_CHUNK_DURATION = 20 * 60  # 20분 (1200초)
 
 
 @shared_task(bind=True, max_retries=3)
@@ -64,11 +69,11 @@ def process_meeting_audio(self, meeting_id: int):
         meeting.save()
         compressed_path = compress_audio(meeting.audio_file.path)
 
-        # 2. STT 처리
+        # 2. STT 처리 (긴 파일은 분할 처리)
         meeting.status = MeetingStatus.TRANSCRIBING
         meeting.save()
         client = get_openai_client(api_key)
-        stt_result = client.transcribe_audio(compressed_path)
+        stt_result = transcribe_audio_with_split(compressed_path, client)
 
         meeting.transcript = stt_result["text"]
         meeting.speaker_data = stt_result["segments"]
@@ -153,6 +158,172 @@ def compress_audio(input_path: str) -> str:
     except FileNotFoundError:
         logger.warning("ffmpeg not found, using original file")
         return input_path
+
+
+def get_audio_duration(audio_path: str) -> float:
+    """
+    오디오 파일의 길이(초)를 반환
+
+    Args:
+        audio_path: 오디오 파일 경로
+
+    Returns:
+        float: 오디오 길이 (초)
+    """
+    try:
+        command = [
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            audio_path,
+        ]
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        data = json.loads(result.stdout)
+        duration = float(data["format"]["duration"])
+        logger.info(f"Audio duration: {duration:.2f} seconds ({duration/60:.1f} minutes)")
+        return duration
+    except (subprocess.CalledProcessError, KeyError, ValueError, FileNotFoundError) as e:
+        logger.warning(f"Failed to get audio duration: {e}")
+        # 길이를 알 수 없으면 분할하지 않도록 0 반환
+        return 0.0
+
+
+def split_audio_ffmpeg(audio_path: str, chunk_duration: int = MAX_CHUNK_DURATION) -> list[str]:
+    """
+    오디오 파일을 지정된 길이로 분할
+
+    Args:
+        audio_path: 원본 오디오 파일 경로
+        chunk_duration: 청크당 최대 길이 (초)
+
+    Returns:
+        list[str]: 분할된 청크 파일 경로 목록
+    """
+    input_file = Path(audio_path)
+    temp_dir = tempfile.mkdtemp(prefix="audio_chunks_")
+    output_pattern = str(Path(temp_dir) / f"chunk_%03d{input_file.suffix}")
+
+    try:
+        command = [
+            "ffmpeg",
+            "-i",
+            audio_path,
+            "-f",
+            "segment",
+            "-segment_time",
+            str(chunk_duration),
+            "-reset_timestamps",
+            "1",  # 메타데이터 리셋 (필수!)
+            "-c",
+            "copy",  # 재인코딩 없이 분할
+            "-y",
+            output_pattern,
+        ]
+        subprocess.run(command, check=True, capture_output=True)
+
+        # 생성된 청크 파일 목록
+        chunks = sorted(Path(temp_dir).glob(f"chunk_*{input_file.suffix}"))
+        chunk_paths = [str(chunk) for chunk in chunks]
+
+        logger.info(f"Split audio into {len(chunk_paths)} chunks")
+        return chunk_paths
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to split audio: {e}")
+        # 분할 실패 시 원본 반환
+        return [audio_path]
+    except FileNotFoundError:
+        logger.error("ffmpeg not found for splitting")
+        return [audio_path]
+
+
+def transcribe_audio_with_split(audio_path: str, client: OpenAIClient) -> dict:
+    """
+    긴 오디오 파일을 분할하여 STT 처리 후 결과 병합
+
+    Args:
+        audio_path: 오디오 파일 경로
+        client: OpenAI 클라이언트
+
+    Returns:
+        dict: {"text": 전체 텍스트, "segments": 화자별 세그먼트}
+    """
+    duration = get_audio_duration(audio_path)
+
+    # 25분 이하면 단일 처리
+    if duration <= MAX_CHUNK_DURATION or duration == 0:
+        logger.info("Audio is short enough, processing as single file")
+        return client.transcribe_audio(audio_path)
+
+    logger.info(f"Audio is {duration/60:.1f} minutes, splitting into chunks")
+
+    # 오디오 분할
+    chunk_paths = split_audio_ffmpeg(audio_path, MAX_CHUNK_DURATION)
+
+    if len(chunk_paths) == 1:
+        # 분할 실패 또는 불필요
+        return client.transcribe_audio(audio_path)
+
+    all_text = []
+    all_segments = []
+    time_offset = 0.0
+
+    try:
+        for i, chunk_path in enumerate(chunk_paths):
+            logger.info(f"Processing chunk {i+1}/{len(chunk_paths)}: {chunk_path}")
+
+            # 각 청크 STT 처리
+            result = client.transcribe_audio(chunk_path)
+            all_text.append(result["text"])
+
+            # 청크의 길이 가져오기
+            chunk_duration = get_audio_duration(chunk_path)
+
+            # 시간 오프셋 적용하여 세그먼트 병합
+            for segment in result["segments"]:
+                all_segments.append(
+                    {
+                        "speaker": segment["speaker"],
+                        "start": segment["start"] + time_offset,
+                        "end": segment["end"] + time_offset,
+                        "text": segment["text"],
+                    }
+                )
+
+            time_offset += chunk_duration
+            logger.info(f"Chunk {i+1} completed, time offset: {time_offset:.2f}s")
+
+    finally:
+        # 임시 청크 파일들 정리
+        for chunk_path in chunk_paths:
+            if chunk_path != audio_path:  # 원본 파일은 삭제하지 않음
+                Path(chunk_path).unlink(missing_ok=True)
+        # 임시 디렉토리도 정리
+        for chunk_path in chunk_paths:
+            if chunk_path != audio_path:
+                parent_dir = Path(chunk_path).parent
+                if parent_dir.exists() and parent_dir.name.startswith("audio_chunks_"):
+                    try:
+                        parent_dir.rmdir()
+                    except OSError:
+                        pass  # 디렉토리가 비어있지 않으면 무시
+                break
+
+    merged_result = {
+        "text": " ".join(all_text),
+        "segments": all_segments,
+    }
+
+    logger.info(
+        f"Merged {len(chunk_paths)} chunks: {len(merged_result['text'])} chars, "
+        f"{len(merged_result['segments'])} segments"
+    )
+
+    return merged_result
 
 
 @shared_task

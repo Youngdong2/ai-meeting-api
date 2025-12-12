@@ -33,7 +33,8 @@ Authorization: Bearer <access_token>
 |------|-----|
 | Access Token 유효시간 | 1시간 |
 | Refresh Token 유효시간 | 7일 |
-| 최대 음성 파일 크기 | 100MB |
+| 최대 음성 파일 크기 | 500MB |
+| 최대 녹음 길이 | 제한 없음 (25분 초과 시 서버에서 자동 분할 처리) |
 | 음성 파일 보관 기간 | 90일 |
 | 지원 오디오 형식 | `.mp3`, `.wav`, `.m4a`, `.ogg`, `.webm`, `.mp4` |
 
@@ -492,7 +493,7 @@ Authorization: Bearer <token>
 |------|------|------|------|
 | `title` | string | O | 회의 제목 |
 | `meeting_date` | datetime | O | 회의 일시 (ISO 8601) |
-| `audio_file` | file | X | 음성 파일 (최대 100MB) |
+| `audio_file` | file | X | 음성 파일 (최대 500MB) |
 
 **JavaScript 예시:**
 ```javascript
@@ -886,3 +887,4 @@ function MeetingSummary({ summary }) {
 |------|------|----------|
 | 1.0 | 2025-01-15 | 최초 작성 - Phase 4-5 완료 |
 | 1.1 | 2025-01-15 | 팀 생성 권한 변경 (인증된 사용자 모두 가능), 프로필 수정으로 팀 가입/변경 기능 문서화 |
+| 1.2 | 2025-12-12 | 긴 오디오 파일 분할 처리 기능 추가 (25분 초과 시 자동 분할), 파일 크기 제한 상향 (100MB → 500MB) |

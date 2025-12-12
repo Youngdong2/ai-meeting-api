@@ -95,10 +95,10 @@ class MeetingCreateSerializer(serializers.ModelSerializer):
 
     def validate_audio_file(self, value):
         if value:
-            # 파일 크기 제한 (100MB)
-            max_size = 100 * 1024 * 1024
+            # 파일 크기 제한 (500MB) - 긴 녹음 파일 지원
+            max_size = 500 * 1024 * 1024
             if value.size > max_size:
-                raise serializers.ValidationError("음성 파일은 100MB를 초과할 수 없습니다.")
+                raise serializers.ValidationError("음성 파일은 500MB를 초과할 수 없습니다.")
 
             # 지원 포맷 확인
             allowed_extensions = [".mp3", ".wav", ".m4a", ".ogg", ".webm", ".mp4"]
