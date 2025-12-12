@@ -49,8 +49,10 @@ class Meeting(models.Model):
     speaker_data = models.JSONField(default=list, blank=True)
     # 예: [{"speaker": "Speaker 0", "text": "...", "start": 0.0, "end": 5.2}, ...]
 
-    # 교정된 텍스트
+    # 교정된 텍스트 (채팅형 전문 표시용)
     corrected_transcript = models.TextField(blank=True, default="")
+    corrected_speaker_data = models.JSONField(default=list, blank=True)
+    # 예: [{"speaker": "Speaker 0", "text": "교정된 텍스트...", "start": 0.0, "end": 5.2}, ...]
 
     # AI 요약
     summary = models.TextField(blank=True, default="")
