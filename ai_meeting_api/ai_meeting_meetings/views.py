@@ -1,3 +1,5 @@
+from django.contrib.postgres.search import SearchQuery, SearchRank, SearchVector
+from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -12,12 +14,13 @@ from .serializers import (
     MeetingCreateSerializer,
     MeetingDetailSerializer,
     MeetingListSerializer,
+    MeetingSearchSerializer,
     MeetingStatusSerializer,
     MeetingUpdateSerializer,
     SpeakerMappingBulkUpdateSerializer,
     SpeakerMappingSerializer,
 )
-from .tasks import process_meeting_audio, regenerate_summary
+from .tasks import process_meeting_audio, regenerate_summary, share_to_slack, upload_to_confluence
 
 
 class MeetingViewSet(viewsets.ModelViewSet):
@@ -149,3 +152,173 @@ class MeetingViewSet(viewsets.ModelViewSet):
         regenerate_summary.delay(meeting.id)
 
         return Response({"message": "요약 생성이 시작되었습니다.", "status": meeting.status})
+
+    @action(detail=False, methods=["get"], url_path="search")
+    def search(self, request):
+        """
+        회의록 검색 (제목, 전문, 요약)
+
+        Query Parameters:
+            q: 검색어 (필수)
+            field: 검색 필드 (선택, 기본값: all)
+                - all: 전체 필드 검색
+                - title: 제목만 검색
+                - transcript: 전문만 검색
+                - summary: 요약만 검색
+        """
+        query = request.query_params.get("q", "").strip()
+        field = request.query_params.get("field", "all")
+
+        if not query:
+            return Response({"results": [], "count": 0, "query": ""})
+
+        user = request.user
+        if not user.team:
+            return Response({"results": [], "count": 0, "query": query})
+
+        queryset = Meeting.objects.filter(team=user.team, status=MeetingStatus.COMPLETED)
+
+        # 검색 필드에 따른 처리
+        if field == "title":
+            # 제목 검색 (LIKE 기반)
+            queryset = queryset.filter(title__icontains=query)
+        elif field == "transcript":
+            # 전문 검색
+            queryset = queryset.filter(Q(transcript__icontains=query) | Q(corrected_transcript__icontains=query))
+        elif field == "summary":
+            # 요약 검색
+            queryset = queryset.filter(summary__icontains=query)
+        else:
+            # 전체 필드 검색 (PostgreSQL Full-text Search)
+            search_vector = (
+                SearchVector("title", weight="A")
+                + SearchVector("corrected_transcript", weight="B")
+                + SearchVector("summary", weight="C")
+                + SearchVector("transcript", weight="D")
+            )
+
+            search_query = SearchQuery(query, search_type="plain")
+
+            queryset = (
+                queryset.annotate(search=search_vector, rank=SearchRank(search_vector, search_query))
+                .filter(
+                    Q(search=search_query)
+                    | Q(title__icontains=query)
+                    | Q(transcript__icontains=query)
+                    | Q(corrected_transcript__icontains=query)
+                    | Q(summary__icontains=query)
+                )
+                .order_by("-rank", "-meeting_date")
+                .distinct()
+            )
+
+        # 결과 직렬화
+        serializer = MeetingSearchSerializer(queryset[:50], many=True)
+
+        return Response(
+            {
+                "results": serializer.data,
+                "count": len(serializer.data),
+                "query": query,
+                "field": field,
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="confluence/upload")
+    def confluence_upload(self, request, pk=None):
+        """Confluence에 회의록 업로드"""
+        meeting = self.get_object()
+
+        if meeting.status != MeetingStatus.COMPLETED:
+            return Response(
+                {"error": "완료된 회의록만 Confluence에 업로드할 수 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 팀 설정 확인
+        try:
+            team_setting = meeting.team.setting
+            if not team_setting.confluence_site_url:
+                return Response(
+                    {"error": "Confluence 설정이 완료되지 않았습니다. 팀 설정에서 Confluence 정보를 입력하세요."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        except Exception:
+            return Response(
+                {"error": "팀 설정을 찾을 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 비동기 업로드 시작
+        upload_to_confluence.delay(meeting.id)
+
+        return Response(
+            {
+                "message": "Confluence 업로드가 시작되었습니다.",
+                "meeting_id": meeting.id,
+            }
+        )
+
+    @action(detail=True, methods=["get"], url_path="confluence/status")
+    def confluence_status(self, request, pk=None):
+        """Confluence 업로드 상태 확인"""
+        meeting = self.get_object()
+
+        return Response(
+            {
+                "uploaded": bool(meeting.confluence_page_id),
+                "page_id": meeting.confluence_page_id or None,
+                "page_url": meeting.confluence_page_url or None,
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="slack/share")
+    def slack_share(self, request, pk=None):
+        """Slack 채널에 회의록 요약 공유"""
+        meeting = self.get_object()
+
+        if meeting.status != MeetingStatus.COMPLETED:
+            return Response(
+                {"error": "완료된 회의록만 Slack에 공유할 수 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 팀 설정 확인
+        try:
+            team_setting = meeting.team.setting
+            if not team_setting.slack_webhook_url and not team_setting.slack_bot_token:
+                return Response(
+                    {"error": "Slack 설정이 완료되지 않았습니다. 팀 설정에서 Slack 정보를 입력하세요."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        except Exception:
+            return Response(
+                {"error": "팀 설정을 찾을 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 채널 파라미터 (선택)
+        channel = request.data.get("channel")
+
+        # 비동기 공유 시작
+        share_to_slack.delay(meeting.id, channel=channel)
+
+        return Response(
+            {
+                "message": "Slack 공유가 시작되었습니다.",
+                "meeting_id": meeting.id,
+            }
+        )
+
+    @action(detail=True, methods=["get"], url_path="slack/status")
+    def slack_status(self, request, pk=None):
+        """Slack 공유 상태 확인"""
+        meeting = self.get_object()
+
+        return Response(
+            {
+                "shared": bool(meeting.slack_channel),
+                "message_ts": meeting.slack_message_ts or None,
+                "channel": meeting.slack_channel or None,
+            }
+        )

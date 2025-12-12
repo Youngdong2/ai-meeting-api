@@ -18,7 +18,7 @@ class Team(models.Model):
 
 
 class TeamSetting(models.Model):
-    """팀 설정 모델 (API Key, Confluence 설정 등)"""
+    """팀 설정 모델 (API Key, Confluence, Slack 설정 등)"""
 
     team = models.OneToOneField(Team, on_delete=models.CASCADE, related_name="setting")
 
@@ -31,6 +31,11 @@ class TeamSetting(models.Model):
     confluence_user_email = models.EmailField(blank=True, default="")
     confluence_space_key = models.CharField(max_length=50, blank=True, default="")
     confluence_parent_page_id = models.CharField(max_length=50, blank=True, default="")
+
+    # Slack 설정
+    slack_webhook_url = models.URLField(blank=True, default="")  # Incoming Webhook URL
+    slack_bot_token = models.CharField(max_length=500, blank=True, default="")  # Bot User OAuth Token
+    slack_default_channel = models.CharField(max_length=100, blank=True, default="")  # 기본 알림 채널
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
