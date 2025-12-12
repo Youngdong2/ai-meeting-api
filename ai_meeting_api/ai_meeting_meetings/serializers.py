@@ -45,6 +45,7 @@ class MeetingDetailSerializer(serializers.ModelSerializer):
     speaker_mappings = SpeakerMappingSerializer(many=True, read_only=True)
     has_audio = serializers.SerializerMethodField()
     audio_file_url = serializers.SerializerMethodField()
+    chat_transcript = serializers.SerializerMethodField()
 
     class Meta:
         model = Meeting
@@ -58,6 +59,8 @@ class MeetingDetailSerializer(serializers.ModelSerializer):
             "transcript",
             "speaker_data",
             "corrected_transcript",
+            "corrected_speaker_data",
+            "chat_transcript",
             "summary",
             "status",
             "status_display",
@@ -82,6 +85,36 @@ class MeetingDetailSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.audio_file.url)
             return obj.audio_file.url
         return None
+
+    def get_chat_transcript(self, obj):
+        """
+        채팅 형식의 전문 반환 (화자 이름 매핑 적용)
+
+        Returns:
+            list: [{"speaker": "김영도", "text": "...", "start": 0.0, "end": 5.2}, ...]
+        """
+        # 교정된 화자별 데이터 우선, 없으면 원본 사용
+        speaker_data = obj.corrected_speaker_data or obj.speaker_data
+        if not speaker_data:
+            return []
+
+        # 화자 이름 매핑 딕셔너리 생성
+        speaker_name_map = {mapping.speaker_label: mapping.speaker_name for mapping in obj.speaker_mappings.all()}
+
+        # 화자 이름 적용
+        chat_transcript = []
+        for segment in speaker_data:
+            speaker_label = segment.get("speaker", "")
+            chat_transcript.append(
+                {
+                    "speaker": speaker_name_map.get(speaker_label, speaker_label),
+                    "text": segment.get("text", ""),
+                    "start": segment.get("start", 0.0),
+                    "end": segment.get("end", 0.0),
+                }
+            )
+
+        return chat_transcript
 
 
 class MeetingCreateSerializer(serializers.ModelSerializer):

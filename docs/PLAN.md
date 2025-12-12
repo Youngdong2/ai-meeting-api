@@ -134,13 +134,15 @@ class Meeting(models.Model):
     audio_file: FileField          # 음성 파일 경로
     audio_file_expires_at: DateTimeField  # 삭제 예정일 (생성일 + 90일)
 
-    # STT 결과
-    transcript: TextField          # STT 원본 텍스트
-    speaker_data: JSONField        # 화자별 발언 데이터
+    # STT 결과 (원본)
+    transcript: TextField          # STT 원본 전체 텍스트
+    speaker_data: JSONField        # STT 원본 화자별 발언 데이터
     # 예: [{"speaker": "Speaker 0", "text": "...", "start": 0.0, "end": 5.2}, ...]
 
-    # 교정된 텍스트
-    corrected_transcript: TextField  # 맞춤법/문맥 교정된 텍스트
+    # 교정된 텍스트 (채팅형 전문 표시용)
+    corrected_transcript: TextField       # 교정된 전체 텍스트
+    corrected_speaker_data: JSONField     # 교정된 화자별 발언 데이터 (채팅형 UI용)
+    # 예: [{"speaker": "Speaker 0", "text": "교정된 텍스트...", "start": 0.0, "end": 5.2}, ...]
 
     # AI 요약
     summary: TextField             # 마크다운 형식 요약
@@ -316,21 +318,49 @@ STT 결과물의 품질 향상을 위한 교정 단계:
   - 문맥에 맞지 않는 단어 수정 (STT 오인식)
   - 불완전한 문장 보완
   - 자연스러운 흐름으로 정리
+- **출력**: `corrected_transcript` + `corrected_speaker_data` (화자별 교정 데이터)
 
 **교정 프롬프트 템플릿:**
 ```
-다음은 회의 음성을 텍스트로 변환한 내용입니다.
-아래 기준으로 교정해주세요:
+다음은 회의 음성을 텍스트로 변환한 화자별 발언 데이터입니다.
+각 발언을 아래 기준으로 교정하고, 동일한 JSON 형식으로 반환해주세요:
 
 1. 맞춤법과 띄어쓰기 교정
 2. STT 오인식으로 보이는 단어를 문맥에 맞게 수정
 3. 불완전한 문장을 자연스럽게 보완
-4. 화자 구분은 그대로 유지
+4. speaker, start, end 값은 그대로 유지
 
 원본의 의미와 화자 발언 순서를 변경하지 마세요.
 
 ---
-{raw_transcript}
+입력:
+{speaker_data_json}
+
+출력 형식:
+[{"speaker": "Speaker 0", "text": "교정된 텍스트", "start": 0.0, "end": 5.2}, ...]
+```
+
+**채팅형 전문 API 응답 예시:**
+```json
+{
+  "id": 1,
+  "title": "AI팀 주간회의",
+  "summary": "## 회의 요약\n...",
+  "chat_transcript": [
+    {
+      "speaker": "김영도",
+      "text": "오늘 회의 시작하겠습니다.",
+      "start": 0.0,
+      "end": 2.5
+    },
+    {
+      "speaker": "홍길동",
+      "text": "네, 지난주 진행 상황 공유드릴게요.",
+      "start": 2.6,
+      "end": 5.8
+    }
+  ]
+}
 ```
 
 ### 5.4 AI 요약 처리

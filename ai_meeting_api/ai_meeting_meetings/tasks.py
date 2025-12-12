@@ -79,10 +79,16 @@ def process_meeting_audio(self, meeting_id: int):
         meeting.speaker_data = stt_result["segments"]
         meeting.save()
 
-        # 3. 텍스트 교정
+        # 3. 텍스트 교정 (화자별 교정 + 전체 텍스트 교정)
         meeting.status = MeetingStatus.CORRECTING
         meeting.save()
-        corrected_text = client.correct_transcript(stt_result["text"])
+
+        # 화자별 발언 데이터 교정 (채팅형 UI용)
+        corrected_speaker_data = client.correct_speaker_data(stt_result["segments"])
+        meeting.corrected_speaker_data = corrected_speaker_data
+
+        # 교정된 화자별 데이터에서 전체 텍스트 생성
+        corrected_text = " ".join([seg["text"] for seg in corrected_speaker_data])
         meeting.corrected_transcript = corrected_text
         meeting.save()
 
@@ -171,24 +177,119 @@ def get_audio_duration(audio_path: str) -> float:
         float: 오디오 길이 (초)
     """
     try:
+        # format과 stream 모두에서 duration을 가져오도록 설정
+        # WebM 등 일부 포맷은 format에 duration이 없고 stream에만 있음
         command = [
             "ffprobe",
             "-v",
             "quiet",
             "-show_entries",
-            "format=duration",
+            "format=duration:stream=duration",
             "-of",
             "json",
             audio_path,
         ]
         result = subprocess.run(command, check=True, capture_output=True, text=True)
         data = json.loads(result.stdout)
-        duration = float(data["format"]["duration"])
-        logger.info(f"Audio duration: {duration:.2f} seconds ({duration/60:.1f} minutes)")
-        return duration
-    except (subprocess.CalledProcessError, KeyError, ValueError, FileNotFoundError) as e:
-        logger.warning(f"Failed to get audio duration: {e}")
-        # 길이를 알 수 없으면 분할하지 않도록 0 반환
+
+        # 1. format.duration 확인
+        duration_str = data.get("format", {}).get("duration")
+        if duration_str:
+            duration = float(duration_str)
+            logger.info(f"Audio duration (format): {duration:.2f} seconds ({duration/60:.1f} minutes)")
+            return duration
+
+        # 2. streams[0].duration 확인 (WebM 등)
+        streams = data.get("streams", [])
+        if streams:
+            for stream in streams:
+                stream_duration = stream.get("duration")
+                if stream_duration:
+                    duration = float(stream_duration)
+                    logger.info(f"Audio duration (stream): {duration:.2f} seconds ({duration/60:.1f} minutes)")
+                    return duration
+
+        # 3. duration을 찾을 수 없는 경우 - ffprobe로 직접 계산
+        logger.warning(f"No duration in metadata, trying to probe directly: {audio_path}")
+        return _get_duration_by_decode(audio_path)
+
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"ffprobe failed for {audio_path}: {e.stderr}")
+        return 0.0
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"Failed to parse ffprobe output for {audio_path}: {e}")
+        return 0.0
+    except FileNotFoundError:
+        logger.warning("ffprobe not found")
+        return 0.0
+
+
+def _get_duration_by_decode(audio_path: str) -> float:
+    """
+    메타데이터에 duration이 없는 경우 파일을 디코딩하여 길이 계산
+
+    Args:
+        audio_path: 오디오 파일 경로
+
+    Returns:
+        float: 오디오 길이 (초), 실패 시 0.0
+    """
+    try:
+        # -count_frames 옵션으로 실제 프레임 수 기반 계산
+        command = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            "-sexagesimal",  # 시:분:초.밀리초 형식
+            audio_path,
+        ]
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        output = result.stdout.strip()
+
+        if output and output != "N/A":
+            # HH:MM:SS.microseconds 형식 파싱
+            parts = output.split(":")
+            if len(parts) == 3:
+                hours = float(parts[0])
+                minutes = float(parts[1])
+                seconds = float(parts[2])
+                duration = hours * 3600 + minutes * 60 + seconds
+                logger.info(f"Audio duration (decoded): {duration:.2f} seconds ({duration/60:.1f} minutes)")
+                return duration
+
+        # 마지막 수단: ffmpeg로 전체 디코딩하여 계산
+        command = [
+            "ffmpeg",
+            "-i",
+            audio_path,
+            "-f",
+            "null",
+            "-",
+        ]
+        result = subprocess.run(command, capture_output=True, text=True)
+        # stderr에서 "time=" 패턴 찾기
+        import re
+
+        match = re.search(r"time=(\d+):(\d+):(\d+\.?\d*)", result.stderr)
+        if match:
+            hours = float(match.group(1))
+            minutes = float(match.group(2))
+            seconds = float(match.group(3))
+            duration = hours * 3600 + minutes * 60 + seconds
+            logger.info(f"Audio duration (ffmpeg decode): {duration:.2f} seconds ({duration/60:.1f} minutes)")
+            return duration
+
+        logger.warning(f"Could not determine duration for {audio_path}")
+        return 0.0
+
+    except Exception as e:
+        logger.warning(f"Failed to get duration by decode for {audio_path}: {e}")
         return 0.0
 
 
