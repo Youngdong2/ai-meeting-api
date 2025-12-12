@@ -1,7 +1,7 @@
 from django.db import transaction
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from ai_meeting_commons.exceptions import ForbiddenException, NotFoundException
@@ -26,8 +26,8 @@ class TeamViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         """액션별 권한 설정"""
         if self.action == "create":
-            # 팀 생성은 staff만 가능
-            return [IsAdminUser()]
+            # 팀 생성은 인증된 사용자 누구나 가능
+            return [IsAuthenticated()]
         elif self.action in ["update", "partial_update", "destroy"]:
             # 팀 수정/삭제는 팀 관리자만 가능
             return [IsAuthenticated(), IsTeamAdmin()]
@@ -48,9 +48,15 @@ class TeamViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
-        """팀 생성 시 TeamSetting도 함께 생성"""
+        """팀 생성 시 TeamSetting 생성 및 생성자를 팀 관리자로 설정"""
         team = serializer.save()
         TeamSetting.objects.create(team=team)
+
+        # 생성자를 해당 팀의 관리자로 설정
+        user = self.request.user
+        user.team = team
+        user.is_team_admin = True
+        user.save()
 
     @action(detail=True, methods=["get"], url_path="settings")
     def team_settings(self, request, pk=None):

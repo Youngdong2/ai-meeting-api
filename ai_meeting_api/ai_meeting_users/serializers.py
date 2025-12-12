@@ -83,17 +83,43 @@ class EmailCheckSerializer(serializers.Serializer):
         return value
 
 
+class TeamInfoSerializer(serializers.Serializer):
+    """팀 간략 정보 Serializer"""
+
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+
+
 class UserSerializer(serializers.ModelSerializer):
+    team_info = TeamInfoSerializer(source="team", read_only=True)
+
     class Meta:
         model = User
-        fields = ["id", "username", "email", "gender", "birth_date", "phone_number", "created_at"]
-        read_only_fields = ["id", "username", "email", "created_at"]
+        fields = [
+            "id",
+            "username",
+            "email",
+            "gender",
+            "birth_date",
+            "phone_number",
+            "team",
+            "team_info",
+            "is_team_admin",
+            "created_at",
+        ]
+        read_only_fields = ["id", "username", "email", "team_info", "is_team_admin", "created_at"]
 
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["phone_number"]
+        fields = ["phone_number", "team"]
+
+    def update(self, instance, validated_data):
+        # 팀 변경 시 팀 관리자 권한 초기화
+        if "team" in validated_data and validated_data["team"] != instance.team:
+            instance.is_team_admin = False
+        return super().update(instance, validated_data)
 
 
 class PasswordChangeSerializer(serializers.Serializer):
