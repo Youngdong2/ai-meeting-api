@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from ai_meeting_commons.exceptions import ForbiddenException, NotFoundException
 from ai_meeting_commons.permissions import IsTeamMember
 
-from .models import Meeting, SpeakerMapping
+from .models import Meeting, MeetingStatus, SpeakerMapping
 from .serializers import (
     MeetingCreateSerializer,
     MeetingDetailSerializer,
@@ -17,6 +17,7 @@ from .serializers import (
     SpeakerMappingBulkUpdateSerializer,
     SpeakerMappingSerializer,
 )
+from .tasks import process_meeting_audio, regenerate_summary
 
 
 class MeetingViewSet(viewsets.ModelViewSet):
@@ -60,9 +61,9 @@ class MeetingViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         meeting = serializer.save()
 
-        # 음성 파일이 있으면 비동기 처리 시작 (Phase 4에서 구현)
-        # if meeting.audio_file:
-        #     process_meeting_audio.delay(meeting.id)
+        # 음성 파일이 있으면 비동기 처리 시작
+        if meeting.audio_file:
+            process_meeting_audio.delay(meeting.id)
 
         response_serializer = MeetingDetailSerializer(meeting, context={"request": request})
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
@@ -131,8 +132,9 @@ class MeetingViewSet(viewsets.ModelViewSet):
         if not meeting.audio_file:
             raise NotFoundException("음성 파일이 없습니다.")
 
-        # Phase 4에서 구현
-        # process_meeting_audio.delay(meeting.id)
+        meeting.status = MeetingStatus.PENDING
+        meeting.save()
+        process_meeting_audio.delay(meeting.id)
 
         return Response({"message": "STT 처리가 시작되었습니다.", "status": meeting.status})
 
@@ -144,7 +146,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
         if not meeting.transcript and not meeting.corrected_transcript:
             raise NotFoundException("STT 텍스트가 없습니다. 먼저 STT를 실행하세요.")
 
-        # Phase 4에서 구현
-        # generate_summary.delay(meeting.id)
+        regenerate_summary.delay(meeting.id)
 
         return Response({"message": "요약 생성이 시작되었습니다.", "status": meeting.status})
