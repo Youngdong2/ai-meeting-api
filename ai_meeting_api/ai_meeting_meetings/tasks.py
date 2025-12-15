@@ -539,28 +539,45 @@ def upload_to_confluence(self, meeting_id: int):
             raise ValueError(f"스페이스 '{team_setting.confluence_space_key}'를 찾을 수 없습니다.")
 
         # 페이지 내용 구성
-        meeting_date_str = meeting.meeting_date.strftime("%Y-%m-%d %H:%M")
-        page_title = f"[회의록] {meeting.title} ({meeting_date_str})"
+        meeting_date_short = meeting.meeting_date.strftime("%m%d")
+        meeting_date_full = meeting.meeting_date.strftime("%Y-%m-%d %H:%M")
+        page_title = f"[회의록] {meeting_date_short} {meeting.title}"
+
+        # 화자 분리된 전문 생성
+        transcript_content = ""
+        if meeting.speaker_data:
+            # speaker_data에서 화자별 대화 추출
+            for segment in meeting.speaker_data:
+                speaker = segment.get("speaker", "Unknown")
+                text = segment.get("text", "")
+                if text:
+                    transcript_content += f"<p><strong>{speaker}:</strong> {text}</p>\n"
+        elif meeting.corrected_transcript:
+            transcript_content = f"<p>{meeting.corrected_transcript}</p>"
+        elif meeting.transcript:
+            transcript_content = f"<p>{meeting.transcript}</p>"
+        else:
+            transcript_content = "<p>전문 없음</p>"
 
         # 마크다운을 Confluence 형식으로 변환
-        status_display = dict(MeetingStatus.choices).get(meeting.status, meeting.status)
-        content_md = f"""# {meeting.title}
+        summary_storage = markdown_to_confluence_storage(meeting.summary or "요약 없음")
 
-**회의 일시:** {meeting_date_str}
-**작성자:** {meeting.created_by.username if meeting.created_by else "Unknown"}
-**상태:** {status_display}
-
----
-
-{meeting.summary or "요약 없음"}
-
----
-
-## 전문
-
-{meeting.corrected_transcript or meeting.transcript or "전문 없음"}
+        # Confluence Storage Format으로 직접 구성 (expand 매크로 포함)
+        content_storage = f"""
+<h1>{meeting.title}</h1>
+<p><strong>회의 일시:</strong> {meeting_date_full}</p>
+<p><strong>작성자:</strong> {meeting.created_by.username if meeting.created_by else "Unknown"}</p>
+<hr/>
+<h2>요약</h2>
+{summary_storage}
+<hr/>
+<ac:structured-macro ac:name="expand">
+  <ac:parameter ac:name="title">전문 보기</ac:parameter>
+  <ac:rich-text-body>
+{transcript_content}
+  </ac:rich-text-body>
+</ac:structured-macro>
 """
-        content_storage = markdown_to_confluence_storage(content_md)
 
         # 이미 업로드된 페이지가 있으면 업데이트, 없으면 생성
         if meeting.confluence_page_id:
@@ -584,11 +601,13 @@ def upload_to_confluence(self, meeting_id: int):
                 )
                 logger.info(f"Re-created Confluence page for meeting {meeting_id}")
         else:
+            parent_id = team_setting.confluence_parent_page_id or None
+            logger.info(f"Creating Confluence page with parent_id: {parent_id}, space_id: {space_id}")
             result = client.create_page(
                 space_id=space_id,
                 title=page_title,
                 content=content_storage,
-                parent_id=team_setting.confluence_parent_page_id or None,
+                parent_id=parent_id,
             )
             logger.info(f"Created Confluence page for meeting {meeting_id}")
 
