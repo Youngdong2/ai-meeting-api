@@ -115,9 +115,11 @@ class ConfluenceClient:
         response.raise_for_status()
 
         data = response.json()
+        webui_path = data.get("_links", {}).get("webui", "")
+        full_url = f"{self.site_url}/wiki{webui_path}" if webui_path else ""
         return {
             "id": page_id,
-            "url": data.get("_links", {}).get("webui", ""),
+            "url": full_url,
             "version": data.get("version", {}).get("number"),
         }
 
